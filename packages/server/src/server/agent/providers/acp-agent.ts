@@ -2637,6 +2637,28 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return error instanceof Error && error.message === this.modelSelectionUnavailableMessage();
   }
 
+  protected async callActiveACPExtension(
+    expectedTurnId: string,
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<{ kind: "inactive" } | { kind: "response"; response: unknown }> {
+    const connection = this.connection;
+    const sessionId = this.sessionId;
+    if (
+      this.closed ||
+      !connection ||
+      !sessionId ||
+      this.activeForegroundTurnId !== expectedTurnId
+    ) {
+      return { kind: "inactive" };
+    }
+
+    return {
+      kind: "response",
+      response: await connection.extMethod(method, { ...params, sessionId }),
+    };
+  }
+
   protected translateSessionNotification(params: SessionNotification): AgentStreamEvent[] {
     return this.translateSessionUpdate(params.update);
   }
@@ -3184,7 +3206,7 @@ function normalizeMcpServers(servers?: Record<string, McpServerConfig>): McpServ
   });
 }
 
-function toACPContentBlocks(prompt: AgentPromptInput): ContentBlock[] {
+export function toACPContentBlocks(prompt: AgentPromptInput): ContentBlock[] {
   if (typeof prompt === "string") {
     return [{ type: "text", text: prompt }];
   }
