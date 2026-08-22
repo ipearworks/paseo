@@ -1,12 +1,15 @@
-import type { SessionNotification } from "@agentclientprotocol/sdk";
+import { RequestError, type SessionNotification } from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
 
 import type {
+  AgentPromptInput,
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
+  SteerActiveTurnOptions,
+  SteerResult,
 } from "../agent-sdk-types.js";
-import { ACPAgentSession, type ACPAgentSessionOptions } from "./acp-agent.js";
+import { ACPAgentSession, type ACPAgentSessionOptions, toACPContentBlocks } from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
 interface TraeACPAgentClientOptions {
@@ -19,6 +22,9 @@ interface TraeACPAgentClientOptions {
 }
 
 const TRAE_INITIAL_COMMANDS_WAIT_TIMEOUT_MS = 10_000;
+const TRAE_STEERING_METHOD = "_session/steering";
+const TRAE_NO_ACTIVE_TURN_MESSAGE = "no active turn to steer";
+const TRAE_INVALID_NO_ACTIVE_TURN_MESSAGE = "Invalid request: no active turn to steer";
 
 export class TraeACPAgentClient extends GenericACPAgentClient {
   constructor(options: TraeACPAgentClientOptions) {
@@ -76,6 +82,53 @@ function childTimelineItem(
 }
 
 export class TraeACPAgentSession extends ACPAgentSession {
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    const pendingPermissionIds = options.clearPendingPermissions
+      ? this.getPendingPermissions().map(({ id }) => id)
+      : [];
+    const params: Record<string, unknown> = {
+      prompt: toACPContentBlocks(prompt),
+      ...(options.clientMessageId ? { _meta: { clientMessageId: options.clientMessageId } } : {}),
+    };
+    let extension: { kind: "inactive" } | { kind: "response"; response: unknown };
+    try {
+      extension = await this.callActiveACPExtension(
+        options.expectedTurnId,
+        TRAE_STEERING_METHOD,
+        params,
+      );
+    } catch (error) {
+      if (
+        error instanceof RequestError &&
+        (error.code === -32601 ||
+          (error.code === -32600 &&
+            (error.message === TRAE_NO_ACTIVE_TURN_MESSAGE ||
+              error.message === TRAE_INVALID_NO_ACTIVE_TURN_MESSAGE)))
+      ) {
+        return { status: "unavailable" };
+      }
+      throw error;
+    }
+    if (extension.kind === "inactive") return { status: "unavailable" };
+
+    if (readRecord(extension.response)?.outcome !== "injected") {
+      throw new Error(
+        "Trae ACP steering returned an invalid response: " + JSON.stringify(extension.response),
+      );
+    }
+    for (const requestId of pendingPermissionIds) {
+      if (!this.getPendingPermissions().some(({ id }) => id === requestId)) continue;
+      await this.respondToPermission(requestId, {
+        behavior: "deny",
+        message: "The user answered with a message instead of approving. Their message follows.",
+      });
+    }
+    return { status: "accepted" };
+  }
+
   protected override translateSessionNotification(params: SessionNotification): AgentStreamEvent[] {
     const childMeta = readTraeMeta(params._meta);
     if (childMeta?.type === "subagent_child") {
