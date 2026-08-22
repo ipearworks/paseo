@@ -35,6 +35,19 @@ describe("resolveAndValidateCreateAgentMode", () => {
     );
   });
 
+  it("uses the provider default when explicit bypass_permissions targets a provider with no modes", () => {
+    const resolved = resolveAndValidateCreateAgentMode({
+      requestedMode: "bypass_permissions",
+      targetProvider: "custom-modeless",
+      parent: null,
+      unattended: false,
+      availableModes: [],
+      targetUnattendedMode: undefined,
+    });
+
+    expect(resolved).toBeUndefined();
+  });
+
   it("returns undefined (provider default) when no mode and no caller", () => {
     const resolved = resolveAndValidateCreateAgentMode({
       requestedMode: undefined,
