@@ -46,6 +46,9 @@ export function resolveAndValidateCreateAgentMode(
   const { requestedMode, targetProvider, parent, availableModes } = input;
 
   if (requestedMode !== undefined) {
+    if (availableModes?.length === 0) {
+      return undefined;
+    }
     if (availableModes !== undefined && !availableModes.includes(requestedMode)) {
       throw new Error(
         `Invalid mode '${requestedMode}' for provider '${targetProvider}'. Available modes: ${listModes(availableModes)}`,
